@@ -1,0 +1,65 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install PS2EXE
+        shell: pwsh
+        run: Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
+
+      - name: Package scripts and compile standalone EXE
+        shell: pwsh
+        run: |
+          $gui = [Convert]::ToBase64String([IO.File]::ReadAllBytes('Download-YouTubeSound-GUI.ps1'))
+          $downloader = [Convert]::ToBase64String([IO.File]::ReadAllBytes('Download-YouTubeSound.ps1'))
+          $wrapper = @'
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:TEMP ('YouTubeSoundDownloader-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          try {
+            [IO.File]::WriteAllBytes((Join-Path $root 'Download-YouTubeSound-GUI.ps1'), [Convert]::FromBase64String('__GUI_B64__'))
+            [IO.File]::WriteAllBytes((Join-Path $root 'Download-YouTubeSound.ps1'), [Convert]::FromBase64String('__DOWNLOADER_B64__'))
+            & (Join-Path $root 'Download-YouTubeSound-GUI.ps1')
+          } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          '@
+          $wrapper = $wrapper.Replace('__GUI_B64__', $gui).Replace('__DOWNLOADER_B64__', $downloader)
+          Set-Content -LiteralPath 'Standalone-Launcher.ps1' -Value $wrapper -Encoding UTF8
+          Invoke-PS2EXE -InputFile 'Standalone-Launcher.ps1' -OutputFile 'YouTube-Sound-Downloader.exe' -Title 'YouTube Sound Downloader' -Product 'YouTube Sound Downloader' -Company 'rahadiana' -Version '1.0.0.0' -NoConsole
+          if (-not (Test-Path 'YouTube-Sound-Downloader.exe')) { throw 'EXE build output was not created.' }
+
+      - name: Verify executable output
+        shell: pwsh
+        run: |
+          $file = Get-Item 'YouTube-Sound-Downloader.exe'
+          if ($file.Length -lt 100KB) { throw "EXE is unexpectedly small: $($file.Length) bytes" }
+          $stream = [IO.File]::OpenRead($file.FullName)
+          try {
+            $signature = New-Object byte[] 2
+            [void]$stream.Read($signature, 0, 2)
+            if ([Text.Encoding]::ASCII.GetString($signature) -ne 'MZ') { throw 'Output does not have a valid Windows PE signature.' }
+          } finally {
+            $stream.Dispose()
+          }
+          Write-Host "Verified EXE: $($file.Length) bytes"
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Sound-Downloader-Windows
+          path: YouTube-Sound-Downloader.exe
+          if-no-files-found: error
+          retention-days: 30
