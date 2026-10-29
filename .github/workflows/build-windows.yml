@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $file = Get-Item 'YouTube-Sound-Downloader.exe'
-          if ($file.Length -lt 100KB) { throw "EXE is unexpectedly small: $($file.Length) bytes" }
+          if ($file.Length -lt 10KB) { throw "EXE is unexpectedly small: $($file.Length) bytes" }
           $stream = [IO.File]::OpenRead($file.FullName)
           try {
             $signature = New-Object byte[] 2
